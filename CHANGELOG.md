@@ -14,6 +14,8 @@
 - **Dashboard**: open 9Remote sidebar item directly to website
 
 ## Fixes
+- **Kiro**: stream long answers instead of holding the whole response until upstream EOF — the integrity gate releases as soon as the answer can no longer be repaired (>800 chars), and SSE comment heartbeats now pass through translate mode so clients and proxies see liveness during validation; repair retry is only possible while zero bytes have been delivered
+- **Kiro**: validate `providerSpecificData.region` before interpolating it into upstream hostnames (executor and IDC token refresh), closing an SSRF/credential-leak path where a crafted region could redirect requests and tokens to an attacker-chosen host
 - **Dashboard**: fix mobile layouts for API Keys card (alignment, code wrap), header breadcrumbs (overflow collision), model chips (full width, break-all), and Claude CLI settings
 - **Gemini**: do not treat properties map as schema node when tool parameter is named `properties` (#4620); rename `$ref` keys in `functionResponse` payloads
 - **Translator**: uniquify duplicate `tool_call_ids` for Gemini (#4532)

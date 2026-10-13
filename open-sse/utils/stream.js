@@ -270,6 +270,19 @@ export function createSSEStream(options = {}) {
         // Translate mode
         if (!trimmed) continue;
 
+        // SSE comment lines (`: heartbeat`) carry no payload, so parseSSELine
+        // rejects them -- but they are the only liveness signal some upstreams
+        // (Kiro's integrity gate) emit while an answer is still being
+        // validated. Forward them verbatim so the client and any reverse proxy
+        // see the connection is alive. Only comment lines qualify; every other
+        // non-`data:` line is still dropped below.
+        if (trimmed.startsWith(":")) {
+          const output = line + "\n";
+          reqLogger?.appendConvertedChunk?.(output);
+          controller.enqueue(sharedEncoder.encode(output));
+          continue;
+        }
+
         const parsed = parseSSELine(trimmed, targetFormat);
         if (!parsed) continue;
 

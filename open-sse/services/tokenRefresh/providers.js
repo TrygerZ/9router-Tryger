@@ -3,6 +3,7 @@ import { OAUTH_ENDPOINTS, GITHUB_COPILOT, buildKimiHeaders } from "../../config/
 import { proxyAwareFetch } from "../../utils/proxyFetch.js";
 import { dedupRefresh } from "./dedup.js";
 import { buildExternalIdpRefreshParams } from "../../../src/lib/oauth/kiroExternalIdp.js";
+import { AWS_REGION_PATTERN } from "../../config/awsConstants.js";
 
 let _xaiServiceSingleton = null;
 export async function refreshXaiToken(refreshToken, log) {
@@ -376,8 +377,14 @@ export async function refreshKiroToken(refreshToken, providerSpecificData, log, 
 
   if (clientId && clientSecret) {
     const isIDC = authMethod === "idc";
-    const endpoint = isIDC && region
-      ? `https://oidc.${region}.amazonaws.com/token`
+    // The region is interpolated into the OIDC hostname, so it is validated
+    // rather than trusted: an injected region would ship the refresh token to
+    // an attacker-chosen origin. Same guard the Kiro executor applies.
+    const safeRegion = typeof region === "string" && AWS_REGION_PATTERN.test(region.trim())
+      ? region.trim()
+      : null;
+    const endpoint = isIDC && safeRegion
+      ? `https://oidc.${safeRegion}.amazonaws.com/token`
       : "https://oidc.us-east-1.amazonaws.com/token";
 
     const response = await proxyAwareFetch(endpoint, {

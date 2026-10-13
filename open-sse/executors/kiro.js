@@ -10,7 +10,7 @@ import { refreshKiroToken } from "../services/tokenRefresh.js";
 import { SSE_DONE, SSE_HEADERS } from "../utils/sseConstants.js";
 import { getCapabilitiesForModel } from "../providers/capabilities.js";
 import { STREAM_FIRST_CHUNK_TIMEOUT_MS } from "../config/runtimeConfig.js";
-import { AWS_EVENTSTREAM } from "../config/awsConstants.js";
+import { AWS_EVENTSTREAM, AWS_REGION_PATTERN } from "../config/awsConstants.js";
 import { crc32, parseEventFrame } from "../utils/awsEventStream.js";
 
 const KIRO_REPAIR_BUFFER_MAX_BYTES = 8 * 1024 * 1024;
@@ -300,7 +300,13 @@ export class KiroExecutor extends BaseExecutor {
     // reject foreign tokens with 401/403, which DO fall through, so trying
     // q/codewhisperer first is safe for every auth method (CLIRO parity).
 
-    const region = (credentials?.providerSpecificData?.region || "us-east-1").trim();
+    // The region is interpolated into the request hostname, so it is validated
+    // rather than trusted: "evil.com/x" would otherwise turn
+    // "q.us-east-1.amazonaws.com" into "q.evil.com/x.amazonaws.com" and ship
+    // the bearer token + profile ARN to an attacker-chosen origin. Same guard
+    // Bedrock applies in shared/awsCredentials.js.
+    const rawRegion = (credentials?.providerSpecificData?.region || "us-east-1").trim();
+    const region = AWS_REGION_PATTERN.test(rawRegion) ? rawRegion : "us-east-1";
     const regionalize = (u) =>
       region && region !== "us-east-1" && u.includes("amazonaws.com")
         ? u.replace(/([a-z]+)\.[a-z0-9-]+\.amazonaws\.com/, `$1.${region}.amazonaws.com`)
@@ -381,16 +387,29 @@ export class KiroExecutor extends BaseExecutor {
         heartbeat();
         heartbeatTimer = setInterval(heartbeat, KIRO_REPAIR_HEARTBEAT_MS);
 
+        // The gate pumps instead of returning bytes: it enqueues directly into the
+        // client controller as soon as the turn is released (LIVE), so a long answer
+        // streams while it is still being generated. `delivered` tells recovery
+        // whether any semantic byte has already reached the client -- delivered
+        // bytes cannot be retracted, so they forbid the repair retry.
+        const options = {
+          signal: abortController.signal,
+          maxBytes,
+          ttftTimeoutMs,
+          stallTimeoutMs,
+          repairEnabled,
+          enqueue: (bytes) => controller.enqueue(bytes)
+        };
+
         try {
-          const bytes = await this.runIntegrityRecovery(result.response, args, {
-            signal: abortController.signal,
-            maxBytes,
-            ttftTimeoutMs,
-            stallTimeoutMs,
-            repairEnabled
-          });
+          const outcome = await this.runIntegrityRecovery(result.response, args, options);
           if (abortController.signal.aborted) throw makeAbortError(abortController.signal.reason);
-          controller.enqueue(bytes);
+          if (outcome.delivered) {
+            // The pump already enqueued everything it decided to deliver.
+            // Nothing further to enqueue here -- just close.
+          } else {
+            controller.enqueue(outcome.bytes);
+          }
           controller.close();
         } catch (error) {
           if (open && error.name === "AbortError") {
@@ -429,12 +448,23 @@ export class KiroExecutor extends BaseExecutor {
       options,
       "initial"
     );
-    if (first.kind === "complete") return first.bytes;
+    if (first.kind === "complete") {
+      return { delivered: false, bytes: first.bytes };
+    }
     if (first.kind === "terminal_stop" || first.kind === "upstream_error") {
-      return this.integrityFailureSSE(first);
+      return { delivered: false, bytes: this.integrityFailureSSE(first) };
     }
     if (first.kind === "invalid_tool" && !options.repairEnabled) {
-      return encodeSSEError("invalid_kiro_tool_call", first.message, first.diagnostics);
+      return {
+        delivered: false,
+        bytes: encodeSSEError("invalid_kiro_tool_call", first.message, first.diagnostics)
+      };
+    }
+
+    // Repair retry is only possible while zero semantic bytes reached the client.
+    // A released (LIVE) attempt already streamed content, so it is terminal here.
+    if (first.kind === "released") {
+      return { delivered: true };
     }
 
     const repairKind = ["ellipsis", "short_final", "invalid_tool"].includes(first.kind)
@@ -461,11 +491,14 @@ export class KiroExecutor extends BaseExecutor {
       } catch (error) {
         if (error.name === "AbortError") throw error;
       }
-      return encodeSSEError(
-        "kiro_integrity_retry_upstream_error",
-        body || `Kiro integrity retry failed with HTTP ${retry?.response?.status || 502}`,
-        { status: retry?.response?.status || 502 }
-      );
+      return {
+        delivered: false,
+        bytes: encodeSSEError(
+          "kiro_integrity_retry_upstream_error",
+          body || `Kiro integrity retry failed with HTTP ${retry?.response?.status || 502}`,
+          { status: retry?.response?.status || 502 }
+        )
+      };
     }
 
     const second = await this.readRecoverableIntegrityAttempt(
@@ -474,9 +507,15 @@ export class KiroExecutor extends BaseExecutor {
       options,
       "retry"
     );
-    if (second.kind === "complete") return second.bytes;
+    if (second.kind === "complete") {
+      return { delivered: false, bytes: second.bytes };
+    }
     if (second.kind === "terminal_stop" || second.kind === "upstream_error") {
-      return this.integrityFailureSSE(second);
+      return { delivered: false, bytes: this.integrityFailureSSE(second) };
+    }
+    if (second.kind === "released") {
+      // The retry released (LIVE) and its terminal frame was forwarded live.
+      return { delivered: true };
     }
     const code = second.kind === "ellipsis"
       ? "kiro_ellipsis_retry_failed"
@@ -485,11 +524,14 @@ export class KiroExecutor extends BaseExecutor {
         : second.kind === "invalid_tool"
           ? "kiro_tool_call_repair_retry_failed"
           : "kiro_missing_terminal_retry_failed";
-    return encodeSSEError(
-      code,
-      `Kiro integrity validation failed after one bounded retry: ${second.message || second.kind}`,
-      { attempts: [first.diagnostics, second.diagnostics].filter(Boolean) }
-    );
+    return {
+      delivered: false,
+      bytes: encodeSSEError(
+        code,
+        `Kiro integrity validation failed after one bounded retry: ${second.message || second.kind}`,
+        { attempts: [first.diagnostics, second.diagnostics].filter(Boolean) }
+      )
+    };
   }
 
   integrityFailureSSE(attempt) {
@@ -528,6 +570,24 @@ export class KiroExecutor extends BaseExecutor {
     }
   }
 
+  /**
+   * Read one integrity attempt, streaming once it can no longer be repaired.
+   *
+   * HOLDING — the attempt stays private while content+reasoning is still small
+   * enough for a text repair to make sense (KIRO_SHORT_FINAL_MAX_CHARS). Every
+   * text-based repair trigger is structurally impossible above that length, so
+   * holding past it provides zero repair capability and only costs latency.
+   *
+   * LIVE — once the threshold is crossed the held bytes are enqueued and every
+   * later chunk is forwarded immediately. Protocol validation still runs per
+   * frame; `emitTools` still validates tool calls before emitting them. A
+   * terminal failure after release is forwarded as an SSE error frame after
+   * whatever content already reached the client — the standard behavior of
+   * every other streaming provider. Repair retry is no longer possible.
+   *
+   * Tool-call-only turns (no text/reasoning growth) stay HOLDING until EOF by
+   * design — those are exactly the turns whose tool wrappers need validation.
+   */
   async readIntegrityAttempt(rawResponse, model, options, attempt) {
     let diagnostics;
     const transformed = this.transformEventStreamToSSE(rawResponse, model, {
@@ -540,7 +600,19 @@ export class KiroExecutor extends BaseExecutor {
     const chunks = [];
     let totalBytes = 0;
     let sawChunk = false;
+    let released = false;
     const output = { content: "", reasoning: "", hasToolCalls: false, error: null };
+
+    const release = () => {
+      released = true;
+      const bytes = concatChunks(chunks, totalBytes);
+      chunks.length = 0;
+      totalBytes = 0;
+      return bytes;
+    };
+    const forward = (value) => {
+      if (options.enqueue) options.enqueue(value);
+    };
 
     try {
       while (true) {
@@ -554,20 +626,47 @@ export class KiroExecutor extends BaseExecutor {
         );
         if (done) break;
         sawChunk = true;
-        totalBytes += value.byteLength;
-        if (totalBytes > options.maxBytes) {
-          await reader.cancel("kiro_integrity_buffer_exceeded").catch(() => {});
-          return {
-            kind: "terminal_stop",
-            message: `Kiro integrity buffer exceeded ${options.maxBytes} bytes`,
-            diagnostics: { terminal_provenance: "integrity_buffer_exceeded" }
-          };
+        if (released) {
+          // LIVE: forward immediately, don't accumulate. The 8MB bound only
+          // guards the private hold buffer; live bytes were never held.
+          forward(value);
+        } else {
+          totalBytes += value.byteLength;
+          if (totalBytes > options.maxBytes) {
+            await reader.cancel("kiro_integrity_buffer_exceeded").catch(() => {});
+            return {
+              kind: "terminal_stop",
+              message: `Kiro integrity buffer exceeded ${options.maxBytes} bytes`,
+              diagnostics: { terminal_provenance: "integrity_buffer_exceeded" }
+            };
+          }
+          chunks.push(value);
         }
-        chunks.push(value);
         inspectSSEChunk(value, output);
+        if (!released &&
+            output.content.length + output.reasoning.length > KIRO_SHORT_FINAL_MAX_CHARS) {
+          // Strictly greater: a final of exactly KIRO_SHORT_FINAL_MAX_CHARS is
+          // still repairable, so exactly-threshold must stay HOLDING.
+          forward(release());
+        }
       }
     } catch (error) {
       await reader.cancel(error.message).catch(() => {});
+      // Cancellation always propagates, in both phases.
+      if (error.name === "AbortError") throw error;
+      if (released) {
+        // The client already received content; this is a terminal failure, not
+        // a retryable one. Report it so the gate appends an error frame.
+        return {
+          kind: "upstream_error",
+          message: error.message || "Kiro stream failed after release",
+          diagnostics: {
+            attempt,
+            terminal_provenance: "transport_read_error",
+            stop_disposition: "terminal_incomplete"
+          }
+        };
+      }
       throw error;
     }
 
@@ -581,6 +680,12 @@ export class KiroExecutor extends BaseExecutor {
       event_counts: diagnostics?.event_counts || {},
       incomplete_frame_bytes: diagnostics?.incomplete_frame_bytes || 0
     };
+    // A released attempt has already delivered bytes to the client. The
+    // transformer's terminal frame (finish or error) was forwarded live by the
+    // pump, so nothing is left to enqueue and no retry is possible.
+    if (released) {
+      return { kind: "released", message: output.error?.message, diagnostics: safeDiagnostics };
+    }
     if (safeDiagnostics.stop_disposition === "retryable_protocol_failure") {
       const kind = safeDiagnostics.terminal_provenance === "invalid_tool_call"
         ? "invalid_tool"
