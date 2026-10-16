@@ -100,3 +100,34 @@ describe("codebuddy-intl preserves the client system prompt", () => {
     expect(out.messages.map(m => m.role)).toEqual(["system", "user", "assistant", "user"]);
   });
 });
+
+// ponytail: port of luqman-v1/9router-go#335 — X-Conversation-* headers
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+describe("codebuddy-intl X-Conversation-* headers (PR #335 port)", () => {
+  it("injects all three conversation headers", () => {
+    const h = exec.buildHeaders({}, true, "https://www.codebuddy.ai/v2/chat/completions", "deepseek-v4.1-flash", {
+      messages: [{ role: "user", content: "hi" }]
+    });
+    expect(h["X-Conversation-ID"]).toMatch(UUID_RE);
+    expect(h["X-Conversation-Request-ID"]).toMatch(UUID_RE);
+    expect(h["X-Conversation-Message-ID"]).toMatch(UUID_RE);
+  });
+
+  it("produces stable conversation ID for same session key", () => {
+    const creds = { sessionId: "test-session-123" };
+    const body = { messages: [{ role: "user", content: "hi" }] };
+    const h1 = exec.buildHeaders(creds, true, "", "", body);
+    const h2 = exec.buildHeaders(creds, true, "", "", body);
+    expect(h1["X-Conversation-ID"]).toBe(h2["X-Conversation-ID"]);
+    // request/message IDs are fresh each call
+    expect(h1["X-Conversation-Request-ID"]).not.toBe(h2["X-Conversation-Request-ID"]);
+  });
+
+  it("falls back to first user text when no sessionId", () => {
+    const body = { messages: [{ role: "user", content: "same opening" }] };
+    const h1 = exec.buildHeaders({}, true, "", "", body);
+    const h2 = exec.buildHeaders({}, true, "", "", body);
+    expect(h1["X-Conversation-ID"]).toBe(h2["X-Conversation-ID"]);
+  });
+});

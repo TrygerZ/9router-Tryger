@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { DefaultExecutor } from "./default.js";
 
 /**
@@ -11,6 +12,41 @@ import { DefaultExecutor } from "./default.js";
 export class CodeBuddyIntlExecutor extends DefaultExecutor {
   constructor() {
     super("codebuddy-intl");
+  }
+
+  // ponytail: port of luqman-v1/9router-go#335 — intl gateway now requires
+  // X-Conversation-* header family or returns 11128 "conversation id missing"
+  buildHeaders(credentials, stream, url, model, body) {
+    const headers = super.buildHeaders(credentials, stream, url, model, body);
+    const sessionKey = credentials?.sessionId || this._firstUserText(body) || "";
+    headers["X-Conversation-ID"] = sessionKey
+      ? this._stableUUID("codebuddy-intl:" + sessionKey)
+      : crypto.randomUUID();
+    headers["X-Conversation-Request-ID"] = crypto.randomUUID();
+    headers["X-Conversation-Message-ID"] = crypto.randomUUID();
+    return headers;
+  }
+
+  /** SHA-1 → UUID v5-shaped, matches Go port's stableConversationUUID. */
+  _stableUUID(key) {
+    const hash = createHash("sha1").update(key).digest();
+    hash[6] = (hash[6] & 0x0f) | 0x50; // version 5
+    hash[8] = (hash[8] & 0x3f) | 0x80; // RFC 4122 variant
+    const h = hash.subarray(0, 16).toString("hex");
+    return `${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20,32)}`;
+  }
+
+  /** Extract first user message text for conversation-key fallback. */
+  _firstUserText(body) {
+    if (!body || typeof body !== "object") return "";
+    const msgs = Array.isArray(body?.messages) ? body.messages : [];
+    for (const m of msgs) {
+      if (m?.role !== "user") continue;
+      if (typeof m.content === "string") return m.content;
+      if (Array.isArray(m.content)) return m.content.map(b => b?.text || "").join("\n");
+      return "";
+    }
+    return "";
   }
 
   transformRequest(model, body, stream, credentials) {
