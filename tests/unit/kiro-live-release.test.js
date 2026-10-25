@@ -238,4 +238,51 @@ describe("Kiro live release (HOLDING -> LIVE)", () => {
     expect(body).toContain('"name":"read_file"');
     expect(body).toContain('"finish_reason":"tool_calls"');
   });
+
+  it("releases short output live when liveStream is enabled on credentials", async () => {
+    const upstream = controlledResponse([
+      frame("assistantResponseEvent", { content: "fast live token" })
+    ]);
+    fetchMock.mockResolvedValueOnce(upstream.value);
+
+    const result = await execute({
+      credentials: {
+        accessToken: "test-token",
+        providerSpecificData: { kiroLiveStream: true }
+      }
+    });
+    const reader = result.response.body.getReader();
+    expect(decodeChunk((await reader.read()).value)).toBe(": kiro-validation\n\n");
+
+    const released = await Promise.race([
+      reader.read().then((value) => decodeChunk(value.value)),
+      new Promise((resolve) => setTimeout(() => resolve(null), 500))
+    ]);
+    expect(released).toContain("fast live token");
+
+    upstream.close();
+    await reader.cancel();
+  });
+
+  it("releases short output live when KIRO_LIVE_STREAM=true env is set", async () => {
+    process.env.KIRO_LIVE_STREAM = "true";
+    const upstream = controlledResponse([
+      frame("assistantResponseEvent", { content: "env live token" })
+    ]);
+    fetchMock.mockResolvedValueOnce(upstream.value);
+
+    const result = await execute();
+    const reader = result.response.body.getReader();
+    expect(decodeChunk((await reader.read()).value)).toBe(": kiro-validation\n\n");
+
+    const released = await Promise.race([
+      reader.read().then((value) => decodeChunk(value.value)),
+      new Promise((resolve) => setTimeout(() => resolve(null), 500))
+    ]);
+    expect(released).toContain("env live token");
+
+    upstream.close();
+    await reader.cancel();
+    delete process.env.KIRO_LIVE_STREAM;
+  });
 });

@@ -288,7 +288,8 @@ export function claudeToKiroRequest(model, body, stream, credentials) {
     modelId: upstreamModel,
     systemPrompt,
     contentPrefix,
-    currentContentPrefix: currentTimeContext,
+    // ponytail: do not inject volatile timestamp into currentMessage; preserves byte-for-byte history cacheability on subsequent turns
+    currentContentPrefix: "",
     history,
     currentMessage,
   });

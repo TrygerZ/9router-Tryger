@@ -99,6 +99,29 @@ export function extractThinking(body) {
     return { mode: "auto" };
   }
 
+  // Kiro additionalModelRequestFields shape
+  const amrf = body.additionalModelRequestFields;
+  if (amrf && typeof amrf === "object") {
+    const amrfOc = amrf.output_config?.effort;
+    if (typeof amrfOc === "string" && amrfOc) {
+      const e = amrfOc.toLowerCase();
+      if (e === "none" || e === "off") return { mode: "none" };
+      if (e === "auto") return { mode: "auto" };
+      return { mode: "level", level: e };
+    }
+    const amrfEffort = amrf.reasoning?.effort;
+    if (typeof amrfEffort === "string" && amrfEffort) {
+      const e = amrfEffort.toLowerCase();
+      if (e === "none" || e === "off") return { mode: "none" };
+      if (e === "auto") return { mode: "auto" };
+      return { mode: "level", level: e };
+    }
+    if (amrf.thinking?.type === "disabled") return { mode: "none" };
+    if (amrf.thinking?.type === "adaptive" || amrf.thinking?.type === "enabled") {
+      return { mode: "auto" };
+    }
+  }
+
   return null;
 }
 

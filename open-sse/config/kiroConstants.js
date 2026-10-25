@@ -222,12 +222,9 @@ export function resolveKiroThinkingBudget(body, headers, model) {
     return KIRO_THINKING_BUDGET_DEFAULT;
   }
 
-  if (headers) {
-    const beta = pickHeader(headers, "anthropic-beta");
-    if (typeof beta === "string" && beta.toLowerCase().includes("interleaved-thinking")) {
-      return KIRO_THINKING_BUDGET_DEFAULT;
-    }
-  }
+  // Note: anthropic-beta: interleaved-thinking is a client capability advertisement,
+  // NOT a request to force 16,000 thinking tokens on non-thinking models (e.g. Haiku).
+  // Only inject thinking if the body or model explicitly requests it.
 
   if (containsThinkingModeTag(body)) return KIRO_THINKING_BUDGET_DEFAULT;
 
