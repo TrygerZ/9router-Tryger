@@ -67,10 +67,14 @@ function evictOldest(cache) {
 export function extractUserToken(credentials) {
   const raw = credentials?.apiKey || credentials?.accessToken;
   if (typeof raw !== "string" || raw.length === 0) return null;
-  // Handle JSON-wrapped tokens (DeepSeek stores token as {"value":"..."})
+  // Handle JSON-wrapped tokens (DeepSeek stores token as {"value":"..."}).
+  // Signed OUT the site still writes {"value":null,...} — that is a placeholder,
+  // not a token, so a wrapper without a string value yields no credential.
   try {
     const parsed = JSON.parse(raw);
-    if (typeof parsed?.value === "string") return parsed.value;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && "value" in parsed) {
+      return typeof parsed.value === "string" && parsed.value ? parsed.value : null;
+    }
   } catch {
     // not JSON, use raw
   }

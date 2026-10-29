@@ -49,14 +49,16 @@ export const WEB_LOGIN_CONFIGS = {
     tokenSources: [{ type: "localStorage", name: "userToken" }],
     // The executor expects the raw token value, not a cookie header.
     credentialFrom: "localStorageValue",
+    // Signed OUT the site still writes userToken as {"value":null,...}. Treating
+    // that as a token ends the capture on the first poll and closes the window
+    // before the user can type; only a string value counts.
     validateToken: (value) => {
       if (typeof value !== "string" || !value.trim()) return false;
       try {
         const parsed = JSON.parse(value);
-        const token = typeof parsed?.value === "string" ? parsed.value : value;
-        return typeof token === "string" && token.length >= 20;
+        return typeof parsed?.value === "string" && parsed.value.length >= 20;
       } catch {
-        return value.length >= 20;
+        return value.trim().length >= 20;
       }
     },
   },
