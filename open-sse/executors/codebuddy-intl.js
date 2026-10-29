@@ -22,7 +22,9 @@ export class CodeBuddyIntlExecutor extends DefaultExecutor {
     headers["X-Conversation-ID"] = sessionKey
       ? this._stableUUID("codebuddy-intl:" + sessionKey)
       : crypto.randomUUID();
-    headers["X-Conversation-Request-ID"] = crypto.randomUUID();
+    // Reuse the id the codebuddyHeaders hook minted so the request/conversation
+    // pair stays identical upstream expects (a mismatch trips channel verification).
+    headers["X-Conversation-Request-ID"] = headers["X-Request-ID"] || crypto.randomUUID();
     headers["X-Conversation-Message-ID"] = crypto.randomUUID();
     return headers;
   }
