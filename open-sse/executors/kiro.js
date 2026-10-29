@@ -369,6 +369,9 @@ export class KiroExecutor extends BaseExecutor {
     const stallTimeoutMs = envPositiveInt("KIRO_TOOL_CALL_REPAIR_STALL_TIMEOUT_MS", legacyTimeout);
     const repairEnabled = args.credentials?.providerSpecificData?.kiroToolCallRepair !== false &&
       process.env.KIRO_TOOL_CALL_REPAIR !== "false";
+    const liveStream = args.credentials?.providerSpecificData?.kiroLiveStream === true ||
+      args.providerOverrides?.liveStream === true ||
+      process.env.KIRO_LIVE_STREAM === "true";
     const forwardAbort = () => abortController.abort(args.signal?.reason);
     args.signal?.addEventListener("abort", forwardAbort, { once: true });
     let open = true;
@@ -398,6 +401,7 @@ export class KiroExecutor extends BaseExecutor {
           ttftTimeoutMs,
           stallTimeoutMs,
           repairEnabled,
+          liveStream,
           enqueue: (bytes) => controller.enqueue(bytes)
         };
 
@@ -592,6 +596,7 @@ export class KiroExecutor extends BaseExecutor {
     let diagnostics;
     const transformed = this.transformEventStreamToSSE(rawResponse, model, {
       maxToolBytes: Math.max(1, Math.floor(options.maxBytes / 2)),
+      liveStream: options.liveStream,
       onTerminalState: (value) => {
         diagnostics = value;
       }
@@ -643,8 +648,10 @@ export class KiroExecutor extends BaseExecutor {
           chunks.push(value);
         }
         inspectSSEChunk(value, output);
-        if (!released &&
-            output.content.length + output.reasoning.length > KIRO_SHORT_FINAL_MAX_CHARS) {
+        const shouldRelease = options.liveStream
+          ? (output.content.length > 0 || output.reasoning.length > 0 || output.hasToolCalls)
+          : (output.content.length + output.reasoning.length > KIRO_SHORT_FINAL_MAX_CHARS);
+        if (!released && shouldRelease) {
           // Strictly greater: a final of exactly KIRO_SHORT_FINAL_MAX_CHARS is
           // still repairable, so exactly-threshold must stay HOLDING.
           forward(release());
@@ -830,6 +837,7 @@ export class KiroExecutor extends BaseExecutor {
     };
     const emitTools = (controller) => {
       for (const tool of state.tools.values()) {
+        if (tool.emittedLive) continue;
         // Validate per tool, not per turn: one unusable fragment used to throw out
         // of emitTools and take every other complete tool call in the same turn
         // with it, which the client saw as a turn that answered nothing.
@@ -953,14 +961,36 @@ export class KiroExecutor extends BaseExecutor {
           }
           let tool = state.tools.get(id);
           if (!tool) {
-            tool = { id, name };
+            const index = state.toolCounter++;
+            tool = { id, name, index, emittedLive: false };
             state.tools.set(id, tool);
             state.bufferedToolBytes += encoder.encode(id).byteLength + encoder.encode(name).byteLength + 32;
             assertToolBufferBound();
+            if (options.liveStream) {
+              tool.emittedLive = true;
+              state.hasToolCalls = true;
+              emitDelta(controller, {
+                tool_calls: [{
+                  index,
+                  id: tool.id,
+                  type: "function",
+                  function: { name: tool.name, arguments: "" }
+                }]
+              });
+            }
           } else if (tool.name !== name) {
             throw new Error("Kiro tool name changed between fragments");
           }
           appendToolInput(tool, value.input);
+          if (options.liveStream && value.input !== undefined) {
+            const rawFrag = typeof value.input === "string" ? value.input : (value.input ? JSON.stringify(value.input) : "");
+            if (rawFrag) {
+              state.totalContentLength += rawFrag.length;
+              emitDelta(controller, {
+                tool_calls: [{ index: tool.index, function: { arguments: rawFrag } }]
+              });
+            }
+          }
         }
       } else if (eventType === "messageStopEvent") {
         state.explicitStop = true;

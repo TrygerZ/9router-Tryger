@@ -624,7 +624,7 @@ describe("openaiToKiroRequest", () => {
         first.conversationState.currentMessage.userInputMessage.content
       );
       expect(second.conversationState.history[0].userInputMessage.modelId).toBe("claude-sonnet-4.6");
-      expect(second.conversationState.currentMessage.userInputMessage.content).toContain("Current time");
+      expect(second.conversationState.currentMessage.userInputMessage.content).not.toContain("Current time");
       expect(second.conversationState.currentMessage.userInputMessage.content).toContain("second turn");
     });
 

@@ -70,6 +70,21 @@ describe("extractThinking", () => {
       reasoning: { effort: "medium" },
     })).toEqual({ mode: "level", level: "medium" });
   });
+  it("kiro additionalModelRequestFields output_config", () => {
+    expect(extractThinking({
+      additionalModelRequestFields: {
+        thinking: { type: "adaptive", display: "summarized" },
+        output_config: { effort: "xhigh" },
+      },
+    })).toEqual({ mode: "level", level: "xhigh" });
+  });
+  it("kiro additionalModelRequestFields reasoning effort", () => {
+    expect(extractThinking({
+      additionalModelRequestFields: {
+        reasoning: { effort: "low" },
+      },
+    })).toEqual({ mode: "level", level: "low" });
+  });
 });
 
 describe("applyThinking per provider format", () => {
