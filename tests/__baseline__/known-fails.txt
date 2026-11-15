@@ -3,6 +3,8 @@
 
 # Catalogued before the June translator refactor (9532ec80); expected behavior not
 # re-established from current code, needs the maintainer.
+# Already red on master before the 0.5.119 merge — the list had drifted since the
+# 2026-10-21 triage (v0.5.104). Not regressions.
 tests/unit/claude-header-forwarding.test.js :: proxyAwareFetch — api.anthropic.com routing routes api.anthropic.com to gotScraping (non-streaming) and returns ok response
 tests/unit/oauth-cursor-auto-import.test.js :: GET /api/oauth/cursor/auto-import extracts tokens using exact keys
 tests/unit/oauth-cursor-auto-import.test.js :: GET /api/oauth/cursor/auto-import falls back to fuzzy key matching on macOS when exact keys are missing
@@ -30,8 +32,54 @@ tests/unit/combo-autoswitch.test.js :: reorderByCapabilities keeps order when no
 # Live call: the upstream now answers "Unsupported model mimo-auto", the only model the
 # (hidden since 6d96e24b) mimo-free / mmf providers list.
 tests/unit/mimo-free.live.test.js :: MiMo Free anti-abuse gate (live) chat WITH Chrome User-Agent → 200
+tests/unit/mimo-free.live.test.js :: MiMo Free bootstrap (live) bootstrap returns 200 with JWT
+
+# Golden buildHeaders: providers whose header set legitimately differs from the
+# snapshot (apiKey/oauth pair) — snapshot predates the current executors.
+tests/translator/golden-url-header.test.js :: GOLDEN buildHeaders (default executor providers) cline → headers (apiKey / oauth)
+tests/translator/golden-url-header.test.js :: GOLDEN buildHeaders (default executor providers) clinepass → headers (apiKey / oauth)
+tests/translator/golden-url-header.test.js :: GOLDEN buildHeaders (default executor providers) codebuddy-cn → headers (apiKey / oauth)
+tests/translator/golden-url-header.test.js :: GOLDEN buildHeaders (default executor providers) codebuddy-intl → headers (apiKey / oauth)
+tests/translator/golden-url-header.test.js :: GOLDEN buildHeaders (default executor providers) kimi → headers (apiKey / oauth)
+tests/translator/golden-url-header.test.js :: GOLDEN buildHeaders (default executor providers) minimax-code → headers (apiKey / oauth)
+tests/translator/golden-url-header.test.js :: GOLDEN buildHeaders (default executor providers) minimax-code-global → headers (apiKey / oauth)
+
+# Environment-dependent on this checkout (interpreter discovery, combo 400 routing,
+# compatible-node creation, model alias ordering, xAI endpoint discovery).
+tests/unit/combo-credit-fallback.test.js :: combo credit fallback routes a 400 response correctly: Bad request
+tests/unit/compatible-provider-connections.test.js :: compatible provider connections API creates one API-key connection for an OpenAI-compatible node
+tests/unit/headroom-detect.test.js :: headroom detect prefers the interpreter that actually has headroom-ai installed
+tests/unit/headroom-responses-format.test.js :: compressWithHeadroom openai-responses format (#1998) skips Responses tool/reasoning history instead of collapsing it into a message (#2132)
+tests/unit/model-routing.test.js :: model routing keeps built-in provider aliases ahead of compatible node prefixes
+tests/unit/xai-oauth-service.test.js :: xai/oauth service exchanges dashboard codes against the discovered xAI token endpoint
+tests/unit/xai-oauth-service.test.js :: xai/oauth service generates dashboard auth data with CLIProxyAPI PKCE size and discovered endpoints
 
 # Cannot load in this repo: benchmarks lowdb (removed in bee8dad9) / imports the cloud/ worker,
 # which is not part of this repository.
 tests/unit/db-benchmark.test.js :: <suite failed to load>
 tests/unit/embeddings.cloud.test.js :: <suite failed to load>
+
+# Upstream 0.5.119 rewrote proxyFetch.js to call the package's own undici instance
+# (rawFetch) instead of globalThis.fetch, so these tests' `global.fetch = vi.fn()`
+# mocks no longer intercept anything. Verified red on a clean upstream/master
+# checkout too — not a merge artifact. Fix = move the mocks to undici (or export
+# an injection seam) and re-enable.
+tests/unit/claude-header-forwarding.test.js :: proxyAwareFetch — api.anthropic.com routing falls back gracefully when got-scraping throws on non-streaming path
+tests/unit/codex-refresh-token.test.js :: Codex Refresh Token CodexExecutor credential lifecycle should de-duplicate concurrent refreshes for the same Codex connection
+tests/unit/codex-refresh-token.test.js :: Codex Refresh Token CodexExecutor credential lifecycle should refresh Codex credentials and preserve omitted id_token
+tests/unit/codex-refresh-token.test.js :: Codex Refresh Token refreshCodexToken should keep old refresh_token when server does not return new one
+tests/unit/codex-refresh-token.test.js :: Codex Refresh Token refreshCodexToken should return new refresh_token when server provides one (token rotation)
+tests/unit/kiro-external-idp.test.js :: Kiro external_idp (CLIProxyAPI) import and refresh refreshes Microsoft external_idp tokens with form-encoded OAuth body
+tests/unit/qoder-proxy-replay.test.js :: Qoder signed inference transport does not replay a signed POST after proxy response loss (null)
+tests/unit/qoder-proxy-replay.test.js :: Qoder signed inference transport does not replay a signed POST after proxy response loss ({"strictProxy":false})
+tests/unit/qoder-proxy-replay.test.js :: Qoder signed inference transport generates a fresh COSY identity when the caller retries after transport failure
+tests/unit/qoder-proxy-replay.test.js :: Qoder signed inference transport preserves caller cancellation without replaying the request
+tests/unit/qoder-proxy-replay.test.js :: Qoder signed inference transport still supports successful inference with proxy=false
+tests/unit/qoder-proxy-replay.test.js :: Qoder signed inference transport still supports successful inference with proxy=true
+tests/unit/token-refresh-generic.test.js :: Cline refresh uses the extension JSON refresh contract
+tests/unit/token-refresh-generic.test.js :: refreshAccessToken — config-driven profiles claude: JSON body, client_id only (no client_secret)
+tests/unit/token-refresh-generic.test.js :: refreshAccessToken — config-driven profiles dedupes concurrent calls with same refresh token (same dedupKey)
+tests/unit/token-refresh-generic.test.js :: refreshAccessToken — config-driven profiles github: omits client_secret when config has none
+tests/unit/token-refresh-generic.test.js :: refreshAccessToken — config-driven profiles iflow: Basic Auth header from clientId:clientSecret, form body keeps client_secret
+tests/unit/token-refresh-generic.test.js :: refreshAccessToken — config-driven profiles kimi: merges X-Msh-* headers from credentials.providerSpecificData.deviceId
+tests/unit/token-refresh-generic.test.js :: refreshAccessToken — config-driven profiles returns null on non-ok response
