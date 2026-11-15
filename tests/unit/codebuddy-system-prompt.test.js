@@ -65,6 +65,41 @@ describe("codebuddy-intl preserves the client system prompt", () => {
     expect(systemOf(out)).toContain("Main branch: master");
   });
 
+  it.each([
+    ["Cursor", "You are Cursor, an AI code editor built by Anysphere. Use tabs."],
+    ["GitHub Copilot", "You are GitHub Copilot, an AI pair programmer. Prefer TypeScript."],
+    ["Cline", "You are Cline, a highly skilled software engineer. Be concise."],
+    ["Windsurf", "You are Windsurf, the editor agent. Explain briefly."],
+    ["Codex", "You are Codex, a coding agent. Ship it."],
+    ["Gemini CLI", "You are Gemini CLI, a terminal assistant. Stay short."],
+    ["Kimi CLI", "You are Kimi CLI, a terminal assistant. Stay short."],
+    ["a generic AI agent", "You are an AI coding agent. Never write code yourself."],
+    ["an AI assistant", "You are an AI assistant. Answer in Indonesian."],
+  ])("neutralizes the %s identity sentence and keeps the rest", (_name, prompt) => {
+    const out = exec.transformRequest("deepseek-v4.1-flash", {
+      messages: [{ role: "system", content: prompt }, { role: "user", content: "hi" }]
+    }, true, {});
+    expect(systemOf(out).startsWith("You are CodeBuddy Code.")).toBe(true);
+    expect(systemOf(out)).toContain(prompt.slice(prompt.indexOf(". ") + 2));
+  });
+
+  it("leaves a generic non-harness identity alone", () => {
+    const prompt = "You are a helpful assistant for our company. Keep answers short.";
+    const out = exec.transformRequest("deepseek-v4.1-flash", {
+      messages: [{ role: "system", content: prompt }, { role: "user", content: "hi" }]
+    }, true, {});
+    expect(systemOf(out)).toBe(prompt);
+  });
+
+  it("does not eat a supervisor's own agent framing", () => {
+    const out = exec.transformRequest("deepseek-v4.1-flash", {
+      messages: [{ role: "system", content: supervisorPrompt }, { role: "user", content: "hi" }]
+    }, true, {});
+    expect(systemOf(out)).toContain("You are a supervisor agent");
+    expect(systemOf(out)).toContain("<agent-identity>supervisor</agent-identity>");
+    expect(systemOf(out)).toContain("<Behavior_Instructions>");
+  });
+
   it("merges multiple system/developer messages instead of dropping them", () => {
     const out = exec.transformRequest("deepseek-v4.1-flash", {
       messages: [

@@ -1,6 +1,60 @@
 import { createHash } from "node:crypto";
 import { DefaultExecutor } from "./default.js";
 
+// The intl gateway 400s (11128 "Illegal API invocation from an unapproved
+// channel") when the system prompt names a third-party coding CLI. Scrubbing
+// only Claude Code's three fingerprints (verified live by per-line bisect) left
+// every other harness exposed, so the identity sentence is neutralized for all
+// known harnesses while the rest of the prompt is preserved verbatim — agent
+// tags, supervisor rules and 10k+ char prompts all pass upstream.
+//
+// Deliberately NOT ported from upstream's broad AGENT_PATTERN: `<agent-identity>`,
+// `<Role>`, `<Behavior_Instructions>`, `orchestration capabilities` and
+// `OhMyOpenCode` are structural tags/block names, not identities. Replacing a
+// lone opening tag leaves `supervisor</agent-identity>` dangling, and its `.+`
+// alternatives eat whole lines of user instructions.
+const BUDDY_IDENTITY = "You are CodeBuddy Code.";
+
+// Harness names, longest-first so "claude code" wins over "claude" and
+// "github copilot" over "copilot" (the tail is consumed either way, but the
+// longest match keeps the replaced span readable in diffs).
+const HARNESS_NAMES = [
+  // Anthropic
+  "claude code", "claude", "anthropic",
+  // Editors / IDE agents
+  "cursor", "windsurf cascade", "windsurf", "codeium", "cline", "roo code",
+  "roocode", "kilo code", "continue", "github copilot", "copilot",
+  "sourcegraph cody", "cody", "augment code", "augment", "amp", "trae ai", "trae",
+  "qodo", "tabnine", "replit agent", "devin", "bolt", "lovable", "v0",
+  "jetbrains ai", "junie", "zed agent", "zed", "warp agent", "warp",
+  "firebase studio", "project idx", "cascade", "double", "supermaven", "tabby",
+  "refact", "sweep", "graphite", "mentat",
+  // CLI agents
+  "openai codex", "codex cli", "codex", "gemini cli", "qwen code", "qwen-cli",
+  "opencode", "crush", "goose", "plandex", "opendevin", "open devin",
+  // Chinese gateways / CLIs
+  "codebuddy code", "codebuddy", "tongyi lingma", "lingma", "qoder",
+  "baidu comate", "comate", "iflow", "kimi cli", "kimi", "moonshot",
+  "zhipu", "glm", "deepseek", "minimax", "doubao", "marscode", "mars code",
+  "codegeex"
+].sort((a, b) => b.length - a.length);
+
+// Identity sentence: "You are <harness>, <rest of that sentence>." — the tail
+// is consumed so "You are Cursor, an AI code editor." goes away whole, while
+// anything after the sentence (rules, tags) is untouched.
+const HARNESS_IDENTITY = new RegExp(
+  String.raw`\byou are\s+(?:an?\s+)?(?:` + HARNESS_NAMES.join("|") + String.raw`)\b[^.\n]*(?:\.|$)`,
+  "gim"
+);
+
+// Fallback for harnesses that only describe themselves generically.
+const GENERIC_AGENT_IDENTITY = /\byou are an? (?:ai )?(?:coding |code )?(?:agent|assistant)\b[^.\n]*(?:\.|$)/gim;
+
+// Claude Code's non-sentence fingerprints (bisect-verified 11128 triggers).
+const BILLING_HEADER = /^x-anthropic-billing-header:.*$/gim;
+const PR_HINT = /\s*\(you will usually use this for PRs\)/gi;
+const CC_ENTRYPOINT = /\bcc_entrypoint\s*=\s*(?:cli|vscode|jetbrains|gui)/gi;
+
 /**
  * CodeBuddyIntlExecutor — talks to https://www.codebuddy.ai/v2/chat/completions
  *
@@ -64,19 +118,7 @@ export class CodeBuddyIntlExecutor extends DefaultExecutor {
 
     // CodeBuddy rejects plain OpenAI shape (11101 invalid request): needs a
     // leading system prompt + user content as typed blocks, not a bare string.
-    //
-    // The gateway 400s (11128 "Illegal API invocation from an unapproved
-    // channel") on exactly three Claude Code fingerprints, verified live by
-    // per-line bisect of a captured request: the identity sentence, the
-    // `x-anthropic-billing-header:` line, and the "(you will usually use this
-    // for PRs)" parenthetical in the gitStatus block. Everything else passes
-    // (agent tags, supervisor rules, 10k+ char prompts), so scrub only those
-    // and keep the client's instructions — dropping the system prompt makes
-    // the model ignore every client directive.
     const SYSTEM_ROLES = ["system", "developer"];
-    const CLAUDE_IDENTITY = /You are Claude Code,\s+Anthropic['’]s official CLI for Claude/gi;
-    const BILLING_HEADER = /^x-anthropic-billing-header:.*$/gim;
-    const PR_HINT = /\s*\(you will usually use this for PRs\)/gi;
     const flatten = (content) =>
       typeof content === "string"
         ? content
@@ -92,7 +134,9 @@ export class CodeBuddyIntlExecutor extends DefaultExecutor {
       .join("\n\n")
       .replace(BILLING_HEADER, "")
       .replace(PR_HINT, "")
-      .replace(CLAUDE_IDENTITY, "You are CodeBuddy Code")
+      .replace(CC_ENTRYPOINT, "")
+      .replace(HARNESS_IDENTITY, BUDDY_IDENTITY)
+      .replace(GENERIC_AGENT_IDENTITY, BUDDY_IDENTITY)
       .trim();
 
     transformed.messages = [{ role: "system", content: systemText || "You are CodeBuddy Code." }];
