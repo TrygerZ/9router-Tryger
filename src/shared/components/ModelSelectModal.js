@@ -26,7 +26,7 @@ const PROVIDER_ORDER = [
 // Static registry stays as fallback when live fetch fails or is empty.
 // zed added in #4244: its backend customResolver already returns live models
 // but the frontend omitted it, hiding Zed entirely from the Combo picker.
-const LIVE_CATALOG_PROVIDERS = ["cursor", "cline", "clinepass", "zed"];
+const LIVE_CATALOG_PROVIDERS = ["cursor", "cline", "clinepass", "zed", "commandcode"];
 
 // Fetch a provider's account-scoped catalog for every active connection and merge
 // the results. Entries collapse by model id on purpose: two connections of the
@@ -156,6 +156,7 @@ export default function ModelSelectModal({
   const clineModels = useLiveProviderModels(isOpen, clineConnectionIds, "Cline");
   const clinepassModels = useLiveProviderModels(isOpen, clinepassConnectionIds, "ClinePass");
   const zedModels = useLiveProviderModels(isOpen, zedConnectionIds, "Zed");
+  const commandcodeModels = useLiveProviderModels(isOpen, liveConnectionIdsByProvider.commandcode, "CommandCode");
 
   const fetchCombos = async () => {
     try {
@@ -300,6 +301,9 @@ export default function ModelSelectModal({
       }
 
       if (providerInfo.passthroughModels) {
+        const providerModels = providerId === "commandcode" && commandcodeModels.length > 0
+          ? commandcodeModels
+          : getModelsByProviderId(providerId);
         const aliasModels = Object.entries(modelAliases)
           .filter(([, fullModel]) => fullModel.startsWith(`${alias}/`))
           .map(([aliasName, fullModel]) => ({
@@ -323,7 +327,7 @@ export default function ModelSelectModal({
           const registeredTyped = customRegisteredModels.filter((m) => getModelKind(m) === kindFilter);
           combined = [
             ...registeredTyped,
-            ...getModelsByProviderId(providerId)
+            ...providerModels
             .filter((m) => getModelKind(m) === kindFilter)
             .map((m) => ({ id: m.id, name: m.name, value: `${alias}/${m.id}`, kind: getModelKind(m) }))
             .filter((m) => !registeredTyped.some((registered) => registered.value === m.value)),
@@ -337,7 +341,7 @@ export default function ModelSelectModal({
           // LLM/null kind: merge hardcoded models (e.g. mimo-free → mimo-auto) with user-added models
           const registeredLlms = customRegisteredModels.filter((m) => !getModelKind(m) || getModelKind(m) === "llm");
           const seen = new Set([...aliasModels, ...registeredLlms].map((m) => m.value));
-          const hardcoded = getModelsByProviderId(providerId)
+          const hardcoded = providerModels
             .filter((m) => !getModelKind(m) || getModelKind(m) === "llm")
             .map((m) => ({ id: m.id, name: m.name, value: `${alias}/${m.id}`, kind: getModelKind(m) }))
             .filter((m) => !seen.has(m.value));
@@ -500,7 +504,7 @@ export default function ModelSelectModal({
     });
 
     return groups;
-  }, [filteredActiveProviders, modelAliases, allProviders, providerNodes, customModels, disabledModels, kindFilter, effectiveConnections, deactivatedProviderIds, cursorModels, clineModels, clinepassModels, zedModels]);
+  }, [filteredActiveProviders, modelAliases, allProviders, providerNodes, customModels, disabledModels, kindFilter, effectiveConnections, deactivatedProviderIds, cursorModels, clineModels, clinepassModels, zedModels, commandcodeModels]);
 
   // Parse search query into structured query (regex, positive tokens, negative tokens)
   const parsedQuery = useMemo(() => parseSearchQuery(searchQuery), [searchQuery]);

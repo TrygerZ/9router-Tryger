@@ -37,7 +37,7 @@ export const NO_AUTH_PROVIDER_IDS = Object.keys(AI_PROVIDERS)
 // Static registry stays as fallback when live fetch fails or is empty.
 // zed added in #4244: its backend customResolver already returns live models
 // but the frontend omitted it, hiding Zed entirely from the Combo picker.
-export const LIVE_CATALOG_PROVIDERS = ["cursor", "cline", "clinepass", "zed"];
+export const LIVE_CATALOG_PROVIDERS = ["cursor", "cline", "clinepass", "zed", "commandcode"];
 
 export const ALL_PROVIDERS = { ...OAUTH_PROVIDERS, ...FREE_PROVIDERS, ...FREE_TIER_PROVIDERS, ...APIKEY_PROVIDERS };
 
@@ -54,7 +54,7 @@ const asArray = (value) => (Array.isArray(value) ? value : []);
  * @param {Array}  [input.providerNodes]  Compatible-provider nodes
  * @param {Array}  [input.customModels]   Rows from /api/models/custom
  * @param {object} [input.disabledModels] alias -> [modelId]
- * @param {object} [input.liveModels]     { cursor: [], cline: [], clinepass: [], zed: [] }
+ * @param {object} [input.liveModels]     { cursor: [], cline: [], clinepass: [], zed: [], commandcode: [] }
  * @returns {Object<string, {name: string, alias: string, color: string, models: Array}>}
  */
 export function buildModelGroups({
@@ -83,6 +83,7 @@ export function buildModelGroups({
   const clineModels = asArray(live.cline);
   const clinepassModels = asArray(live.clinepass);
   const zedModels = asArray(live.zed);
+  const commandcodeModels = asArray(live.commandcode);
 
   const groups = {};
 
@@ -159,6 +160,9 @@ export function buildModelGroups({
     }
 
     if (providerInfo.passthroughModels) {
+      const providerModels = providerId === "commandcode" && commandcodeModels.length > 0
+        ? commandcodeModels
+        : getModelsByProviderId(providerId);
       const aliasModels = Object.entries(modelAliasesSafe)
         .filter(([, fullModel]) => fullModel.startsWith(`${alias}/`))
         .map(([aliasName, fullModel]) => ({
@@ -182,8 +186,8 @@ export function buildModelGroups({
         const registeredTyped = customRegisteredModels.filter((m) => getModelKind(m) === kindFilter);
         combined = [
           ...registeredTyped,
-          ...getModelsByProviderId(providerId)
-          .filter((m) => getModelKind(m) === kindFilter)
+          ...providerModels
+            .filter((m) => getModelKind(m) === kindFilter)
           .map((m) => ({ id: m.id, name: m.name, value: `${alias}/${m.id}`, kind: getModelKind(m) }))
           .filter((m) => !registeredTyped.some((registered) => registered.value === m.value)),
         ];
@@ -196,7 +200,7 @@ export function buildModelGroups({
         // LLM/null kind: merge hardcoded models (e.g. mimo-free → mimo-auto) with user-added models
         const registeredLlms = customRegisteredModels.filter((m) => !getModelKind(m) || getModelKind(m) === "llm");
         const seen = new Set([...aliasModels, ...registeredLlms].map((m) => m.value));
-        const hardcoded = getModelsByProviderId(providerId)
+        const hardcoded = providerModels
           .filter((m) => !getModelKind(m) || getModelKind(m) === "llm")
           .map((m) => ({ id: m.id, name: m.name, value: `${alias}/${m.id}`, kind: getModelKind(m) }))
           .filter((m) => !seen.has(m.value));
@@ -265,7 +269,7 @@ export function buildModelGroups({
         hasModels: mergedModels.length > 0,
       };
     } else {
-      const liveModels = providerId === "cursor" ? cursorModels : providerId === "cline" ? clineModels : providerId === "clinepass" ? clinepassModels : providerId === "zed" ? zedModels : [];
+      const liveModels = providerId === "cursor" ? cursorModels : providerId === "cline" ? clineModels : providerId === "clinepass" ? clinepassModels : providerId === "zed" ? zedModels : providerId === "commandcode" ? commandcodeModels : [];
       const hardcodedModels = liveModels.length > 0
         ? liveModels
         : getModelsByProviderId(providerId);
