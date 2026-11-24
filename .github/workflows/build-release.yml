@@ -28,8 +28,12 @@ jobs:
 
       - name: Pack global npm tarball
         run: |
-          npm pack
-          mv 9router-*.tgz 9router-fork.tgz
+          tar -czf 9router-fork.tgz \
+            --exclude='./.git' \
+            --exclude='./node_modules' \
+            --exclude='./9router-fork.tgz' \
+            --transform='s,^\.,package,' \
+            .
 
       - name: Publish to GitHub Release
         uses: softprops/action-gh-release@v2
